@@ -17,6 +17,7 @@
 package com.android.systemui.biometrics;
 
 import static android.hardware.biometrics.BiometricFingerprintConstants.FINGERPRINT_ACQUIRED_GOOD;
+import static android.hardware.biometrics.BiometricFingerprintConstants.FINGERPRINT_ACQUIRED_VENDOR;
 import static android.hardware.biometrics.BiometricOverlayConstants.REASON_AUTH_KEYGUARD;
 
 import static com.android.internal.util.Preconditions.checkNotNull;
@@ -37,6 +38,7 @@ import android.hardware.fingerprint.IUdfpsOverlayControllerCallback;
 import android.os.Handler;
 import android.os.PowerManager;
 import android.os.Process;
+import android.os.UserHandle;
 import android.os.Trace;
 import android.os.VibrationAttributes;
 import android.os.VibrationEffect;
@@ -52,6 +54,7 @@ import android.view.accessibility.AccessibilityManager;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.LatencyTracker;
 import com.android.keyguard.KeyguardUpdateMonitor;
+import com.android.systemui.R;
 import com.android.systemui.animation.ActivityLaunchAnimator;
 import com.android.systemui.biometrics.dagger.BiometricsBackground;
 import com.android.systemui.dagger.SysUISingleton;
@@ -96,6 +99,7 @@ import kotlin.Unit;
 @SuppressWarnings("deprecation")
 @SysUISingleton
 public class UdfpsController implements DozeReceiver {
+    private static final String PULSE_ACTION = "com.android.systemui.doze.pulse";
     private static final String TAG = "UdfpsController";
     private static final long AOD_INTERRUPT_TIMEOUT_MILLIS = 1000;
 
@@ -165,6 +169,7 @@ public class UdfpsController implements DozeReceiver {
     private boolean mOnFingerDown;
     private boolean mAttemptedToDismissKeyguard;
     private final Set<Callback> mCallbacks = new HashSet<>();
+    private int mUdfpsVendorCode;
 
     @VisibleForTesting
     public static final VibrationAttributes VIBRATION_ATTRIBUTES =
@@ -227,7 +232,7 @@ public class UdfpsController implements DozeReceiver {
         @Override
         public void onAcquired(
                 int sensorId,
-                @BiometricFingerprintConstants.FingerprintAcquired int acquiredInfo
+                @BiometricFingerprintConstants.FingerprintAcquired int acquiredInfo, int vendorCode
         ) {
             if (BiometricFingerprintConstants.shouldTurnOffHbm(acquiredInfo)) {
                 boolean acquiredGood = acquiredInfo == FINGERPRINT_ACQUIRED_GOOD;
@@ -246,6 +251,16 @@ public class UdfpsController implements DozeReceiver {
                         mOverlay.onAcquiredGood();
                     }
                 });
+            } else {
+                boolean acquiredVendor = acquiredInfo == FINGERPRINT_ACQUIRED_VENDOR;
+                if (!acquiredVendor || (!mStatusBarStateController.isDozing() && mScreenOn)) {
+                    return;
+                }
+                if (vendorCode == 22) {
+                    mContext.sendBroadcastAsUser(new Intent(PULSE_ACTION),
+                                    new UserHandle(UserHandle.USER_CURRENT));
+                    onAodInterrupt(0, 0, 0, 0);
+                }
             }
         }
 
@@ -663,6 +678,8 @@ public class UdfpsController implements DozeReceiver {
 
         udfpsHapticsSimulator.setUdfpsController(this);
         udfpsShell.setUdfpsOverlayController(mUdfpsOverlayController);
+
+        mUdfpsVendorCode = mContext.getResources().getInteger(R.integer.config_udfpsVendorCode);
     }
 
     /**
